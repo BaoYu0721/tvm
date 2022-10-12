@@ -864,7 +864,16 @@ bool Conv2DTransposeRel(const Array<Type>& types, int num_inputs, const Attrs& a
 
   DataType out_dtype = param->out_dtype;
   if (out_dtype.bits() == 0) {
-    out_dtype = data->dtype;
+    int d_code = data->dtype.code(), w_code = weight->dtype.code();
+    if (data->dtype.bits() == 8 && weight->dtype.bits() == 8 && (d_code == 0 || d_code == 1) && (w_code == 0 || w_code == 1))
+    {
+      // when data and weight is int8 or uint8, the result should be int32
+      out_dtype = DataType(DataType::TypeCode::kInt, 32, 1);
+    }
+    else
+    {
+      out_dtype = data->dtype;
+    }
   }
   oshape = trans_out_layout.BackwardShape(oshape);
   reporter->Assign(types[2], TensorType(oshape, out_dtype));

@@ -478,11 +478,20 @@ def deformable_conv2d_strategy(attrs, inputs, out_type, target):
 def wrap_compute_conv2d_transpose(topi_compute, has_groups=False, add_layout=False):
     """wrap conv2d_transpose topi compute"""
 
+    def is8bitInteger(dtype):
+        if (dtype == 'uint8' or dtype == 'int8'):
+            return True
+        else:
+            return False
+
     def compute_conv2d_transpose(attrs, inputs, out_dtype):
         """Compute definition of conv2d_transpose"""
         padding = get_const_tuple(attrs.padding)
         strides = get_const_tuple(attrs.strides)
         out_dtype = attrs.out_dtype
+        if (is8bitInteger(inputs[0].dtype) and is8bitInteger(inputs[1].dtype)):
+            # if input and weight is int8 or uint8, the result must be int32
+            out_dtype = 'int32'
         out_dtype = inputs[0].dtype if out_dtype in ("same", "") else out_dtype
         output_padding = get_const_tuple(attrs.output_padding)
         # out = topi_compute(inputs[0], inputs[1], strides, padding, out_dtype, output_padding)
