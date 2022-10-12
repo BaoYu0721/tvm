@@ -63,6 +63,7 @@ def conv2d_transpose_nchw(cfg, data, kernel, stride, padding, out_dtype, output_
         inp_channels % groups == 0
     ), f"input channels {inp_channels} must divide group size {groups}"
     cfg.stride = stride
+    cfg.padding = padding
     pad_top, pad_left, pad_bottom, pad_right = nn.get_pad_tuple(
         padding, (kernel_height, kernel_width)
     )
@@ -183,6 +184,27 @@ def schedule_conv2d_transpose_nchw(cfg, outs):
         cfg["unroll_explicit"] = OtherOptionEntity(True)
         cfg["auto_unroll_max_step"] = OtherOptionEntity(1500)
 
+    def _is_tuple_all_this_num(tuple_, num):
+        for item in tuple_:
+            if (item != num):
+                return False
+        return True
+
+    def _is_fallback_case(kshape, stride, padding):
+        kh, kw = kshape[2], kshape[3]
+        sh, sw = stride
+        if (kh == 4 and kw == 4 and sh == 2 and sw == 2 and _is_tuple_all_this_num(padding, 1)):
+            return False
+        elif (kh == 4 and kw == 4 and sh == 4 and sw == 4 and _is_tuple_all_this_num(padding, 0)):
+            return False
+        elif (kh == 3 and kw == 3 and sh == 1 and sw == 1 and _is_tuple_all_this_num(padding, 1)):
+            return False
+        print ('-------------------------')
+        print (kshape)
+        print (stride)
+        print (padding)
+        return True
+
     def _callback(op):
         if op.tag == "conv2d_transpose_nchw":
             pad_data = op.input_tensors[0]
@@ -208,6 +230,7 @@ def schedule_conv2d_transpose_nchw(cfg, outs):
             else:
                 cfg.define_knob("unroll_explicit", [0, 1])
 
+            cfg.is_fallback = _is_fallback_case(kernel.shape, cfg.stride, cfg.padding)
             if cfg.is_fallback:
                 N, F, Y, X = get_const_tuple(conv.shape)
                 if not isinstance(N, int):
