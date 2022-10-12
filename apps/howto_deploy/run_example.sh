@@ -29,4 +29,4 @@ echo "Run the cpp deployment with all in normal library..."
 lib/cpp_deploy_normal
 
 echo "Run the python deployment with all in normal library..."
-python3 python_deploy.py
+python3.8 python_deploy.py
