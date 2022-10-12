@@ -39,7 +39,7 @@ lib/libtvm_runtime_pack.o: tvm_runtime_pack.cc
 # The code library built by TVM
 lib/test_addone_sys.o: prepare_test_libs.py
 	@mkdir -p $(@D)
-	python3 prepare_test_libs.py
+	python3.8 prepare_test_libs.py
 
 # Deploy using the all in one TVM package library
 lib/cpp_deploy_pack: cpp_deploy.cc lib/test_addone_sys.o lib/libtvm_runtime_pack.o
