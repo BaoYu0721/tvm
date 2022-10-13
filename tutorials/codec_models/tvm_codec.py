@@ -45,8 +45,8 @@ def prepareData(model_name):
     output_np = np.fromfile('{}/output_0.bin'.format(dir_name), dtype=dtype)
     input_shape = parseDataShapeFromTxt('{}/input_shape_0.txt'.format(dir_name))
     output_shape = parseDataShapeFromTxt('{}/output_shape_0.txt'.format(dir_name))
-    input_np = input_np.reshape(input_shape) #.astype(np.uint8)
-    output_np = output_np.reshape(output_shape) #.astype(np.uint8)
+    input_np = input_np.reshape(input_shape)
+    output_np = output_np.reshape(output_shape)
     return input_np, output_np, input_shape, output_shape
 
 def runRelayFrontEnd(input_name, onnx_model, img_data):
@@ -54,10 +54,12 @@ def runRelayFrontEnd(input_name, onnx_model, img_data):
     mod, params = relay.frontend.from_onnx(onnx_model, shape_dict)
     return mod, params
 
-def createGraph(target, mod, params, debug_flag, debug_dir):
+def createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path):
     # with tvm.transform.PassContext(opt_level=3, config={"relay.FuseOps.max_depth": 1}):
     with tvm.transform.PassContext(opt_level=3):
         lib = relay.build(mod, target=target, params=params)
+    if save_lib_path is not None:
+        lib.export_library(save_lib_path)
     dev = tvm.device(str(target), 0)
     if debug_flag:
         module = GraphModuleDebug(lib["debug_create"]("default", dev), [dev], lib.graph_json, dump_root=debug_dir)
@@ -117,27 +119,28 @@ def checkOnnxModel(onnx_model):
         print (w.dtype)
 
 if __name__ == '__main__':
-    target, debug_flag, model_name = 'cuda', False, 'y_decoder'
+    target, debug_flag, model_name, save_lib_flag = 'llvm', False, 'y_decoder', True
     input_name = model_inname_map[model_name]
     debug_dir = './debug_{}'.format(model_name)
-    onnx_model = onnx.load('./{}.onnx'.format(model_name))
+    tuning_record_name = './{}_autotuning.json'.format(model_name)
+    onnx_model = onnx.load('./onnx_model_by/{}.onnx'.format(model_name))
+    if save_lib_flag:
+        save_lib_path = './libs/{}.so'.format(model_name)
+    else:
+        save_lib_path = None
     checkOnnxModel(onnx_model)
 
     input_np, output_np, input_shape, output_shape = prepareData(model_name)
 
     mod, params = runRelayFrontEnd(input_name, onnx_model, input_np)
 
-    module = createGraph(target, mod, params, debug_flag, debug_dir)
+    module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
     tvm_output = runGraph(input_name, module, input_np, output_shape)
 
-    # tuning_record_name = "zdecoder_autotuning.json"
     # tuneModel(target, mod, params, tuning_record_name)
     # with autotvm.apply_history_best(tuning_record_name):
-    #     module = createGraph(target, mod, params, debug_flag, debug_dir)
+    #     module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
     # tvm_output = runGraph(input_name, module, input_np, output_shape)
 
-    err = tvm_output.astype(np.float32) - output_np.astype(np.float32)
+    err = np.abs(tvm_output.astype(np.float32) - output_np.astype(np.float32))
     print (err.max(), err.min(), err.mean())
-    # print (tvm_output)
-    # print ('--------------------------------------')
-    # print (output_np)
