@@ -6,6 +6,7 @@
 #include <map>
 #include <fstream>
 #include <cmath>
+#include <chrono>
 
 class CodecNetProperty
 {
@@ -225,7 +226,10 @@ int main()
     // dev type: kDLCPU, kDLCUDA, etc.
     NetworkForward nf(model_name, dev_type);
     nf.prepareInOutBuffer(0);
+    std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
     nf.forwardOneTime();
+    std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
+    std::cout << std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() << " micro secs\n\n";
     nf.checkAccuracy();
     return 0;
 }
