@@ -193,12 +193,37 @@ void NetworkForward::prepareNamePropertyMap()
     name_prop_map.emplace(std::string("z_encoder"), CodecNetProperty("zencoder_inout", "float32", "z_encoder_data"));
 }
 
+void parseSimpleCfg(const std::string cfg_name, std::string &model_name, DLDeviceType &dev_type)
+{
+    std::ifstream fin(cfg_name.c_str());
+    std::getline(fin, model_name);
+    std::cout << model_name << "\n";
+    std::string target_name;
+    std::getline(fin, target_name);
+    std::cout << target_name << "\n";
+    if (target_name == "llvm")
+    {
+        dev_type = kDLCPU;
+    }
+    else if (target_name == "cuda")
+    {
+        dev_type = kDLCUDA;
+    }
+    else
+    {
+        dev_type = kDLExtDev;
+    }
+    fin.close();
+}
 
 int main()
 {
+    std::string model_name;
+    DLDeviceType dev_type;
+    parseSimpleCfg("./simple_cfg.txt", model_name, dev_type);
     NetworkForward::prepareNamePropertyMap();
     // dev type: kDLCPU, kDLCUDA, etc.
-    NetworkForward nf("y_decoder", kDLCPU);
+    NetworkForward nf(model_name, dev_type);
     nf.prepareInOutBuffer(0);
     nf.forwardOneTime();
     nf.checkAccuracy();

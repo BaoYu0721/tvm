@@ -32,6 +32,15 @@ model_inname_map = {
     'z_encoder': 'z_encoder_data'
 }
 
+def parseSimpleCfg(cfg_fn):
+    with open(cfg_fn, 'r') as fcfg:
+        lines = fcfg.readlines()
+        res = []
+        for line in lines:
+            res.append(line.strip())
+        model_name, target = res[0], res[1]
+    return model_name, target
+
 def parseDataShapeFromTxt(file_name):
     with open(file_name, 'r') as fp:
         content = fp.read().strip()
@@ -119,7 +128,8 @@ def checkOnnxModel(onnx_model):
         print (w.dtype)
 
 if __name__ == '__main__':
-    target, debug_flag, model_name, save_lib_flag = 'llvm', False, 'y_decoder', True
+    debug_flag, save_lib_flag = False, True
+    model_name, target = parseSimpleCfg('./simple_cfg.txt')
     input_name = model_inname_map[model_name]
     debug_dir = './debug_{}'.format(model_name)
     tuning_record_name = './{}_autotuning.json'.format(model_name)
