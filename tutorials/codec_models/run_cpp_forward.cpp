@@ -76,7 +76,7 @@ public:
     void loadInAndGTBuffer(const std::string in_data_name, const std::string out_data_name);
 
     void prepareInOutBuffer(int data_idx);
-    void forwardOneTime();
+    void forwardOneTime(DLDeviceType dev_type);
 
     template<typename T>
     void checkOutAndGT();
@@ -151,13 +151,16 @@ void NetworkForward::prepareInOutBuffer(int data_idx)
     }
 }
 
-void NetworkForward::forwardOneTime()
+void NetworkForward::forwardOneTime(DLDeviceType dev_type)
 {
     if (dtype == "float32" || dtype == "int32")
     {
         set_input(in_name, in_data);
         run();
         get_output(0, out_data);
+        // 仅仅是为了测速，上面的run和get_output都是异步的。
+        // 如果不测速，其实不用加下面的同步函数。同步函数会自动在后面的 CopyToBytes 中调用
+        TVMSynchronize(dev_type, 0, NULL);
     }
 }
 
@@ -227,7 +230,7 @@ int main()
     NetworkForward nf(model_name, dev_type);
     nf.prepareInOutBuffer(0);
     std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
-    nf.forwardOneTime();
+    nf.forwardOneTime(dev_type);
     std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
     std::cout << std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() << " micro secs\n\n";
     nf.checkAccuracy();
