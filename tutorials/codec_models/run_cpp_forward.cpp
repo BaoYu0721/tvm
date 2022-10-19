@@ -12,11 +12,12 @@ class CodecNetProperty
 {
 public:
     std::string inout_data_dir;
-    std::string dtype;
+    std::string in_type;
+    std::string out_type;
     std::string input_name;
 
-    CodecNetProperty(const std::string data_dir, const std::string dt, const std::string iname) : inout_data_dir(data_dir),
-        dtype(dt), input_name(iname)
+    CodecNetProperty(const std::string data_dir, const std::string it, const std::string ot, const std::string iname) : inout_data_dir(data_dir),
+        in_type(it), out_type(ot), input_name(iname)
     {
 
     }
@@ -64,7 +65,8 @@ private:
     tvm::runtime::NDArray out_data;
     tvm::runtime::NDArray gt_data;
     std::string in_name;
-    std::string dtype;
+    std::string in_type;
+    std::string out_type;
     int total_out_size;
     int total_in_size;
 
@@ -72,10 +74,10 @@ public:
     NetworkForward(const std::string mode_name, DLDeviceType dev_type);
     ~NetworkForward();
 
-    template<typename T>
+    template<typename IN_T, typename OUT_T>
     void loadInAndGTBuffer(const std::string in_data_name, const std::string out_data_name);
 
-    void prepareInOutBuffer(int data_idx);
+    void prepareInOutBuffer(const std::string &model_version, int data_idx);
     void forwardOneTime(DLDeviceType dev_type);
 
     template<typename T>
@@ -84,7 +86,7 @@ public:
     void checkAccuracy();
 
     static std::map<std::string, CodecNetProperty> name_prop_map;
-    static void prepareNamePropertyMap();
+    static void prepareNamePropertyMap(const std::string &model_version);
 };
 std::map<std::string, CodecNetProperty> NetworkForward::name_prop_map;
 
@@ -100,7 +102,8 @@ NetworkForward::NetworkForward(const std::string mod_name, DLDeviceType dev_type
     get_output = graph_exe_mod.GetFunction("get_output");
     run = graph_exe_mod.GetFunction("run");
     in_name = NetworkForward::name_prop_map.find(mod_name)->second.input_name;
-    dtype = (NetworkForward::name_prop_map.find(mod_name))->second.dtype;
+    in_type = (NetworkForward::name_prop_map.find(mod_name))->second.in_type;
+    out_type = (NetworkForward::name_prop_map.find(mod_name))->second.out_type;
     total_out_size = total_in_size = 0;
 }
 
@@ -108,23 +111,36 @@ NetworkForward::~NetworkForward()
 {
 }
 
-template<typename T>
+template<typename IN_T, typename OUT_T>
 void NetworkForward::loadInAndGTBuffer(const std::string in_data_name, const std::string out_data_name)
 {
-    T *in_raw = new T[total_in_size];
-    T *gt_raw = new T[total_out_size];
+    IN_T *in_raw = new IN_T[total_in_size];
+    OUT_T *gt_raw = new OUT_T[total_out_size];
     getDataFromBin(in_data_name, in_raw, total_in_size);
     getDataFromBin(out_data_name, gt_raw, total_out_size);
-    in_data.CopyFromBytes(in_raw, total_in_size * sizeof(T));
-    gt_data.CopyFromBytes(gt_raw, total_out_size * sizeof(T));
+    in_data.CopyFromBytes(in_raw, total_in_size * sizeof(IN_T));
+    gt_data.CopyFromBytes(gt_raw, total_out_size * sizeof(OUT_T));
     delete [] in_raw;
     delete [] gt_raw;
 }
 
-void NetworkForward::prepareInOutBuffer(int data_idx)
+void getDLDataTypeFromStr(const std::string &type_str, DLDataType &type)
+{
+    type = DLDataType{kDLFloat, 32, 1};
+    if (type_str == "int32")
+    {
+        type = DLDataType{kDLInt, 32, 1};
+    }
+    else if (type_str == "uint8")
+    {
+        type = DLDataType{kDLUInt, 8, 1};
+    }
+}
+
+void NetworkForward::prepareInOutBuffer(const std::string &model_version, int data_idx)
 {
     int in, ic, ih, iw, on, oc, oh, ow;
-    std::string data_dir = "./" + (NetworkForward::name_prop_map.find(mod_name))->second.inout_data_dir + "/";
+    std::string data_dir = "./" + (NetworkForward::name_prop_map.find(mod_name))->second.inout_data_dir + "/" + model_version + "/";
     std::string in_shape_name = data_dir + "input_shape_" + std::to_string(data_idx) + ".txt";
     std::string out_shape_name = data_dir + "output_shape_" + std::to_string(data_idx) + ".txt";
     std::string in_data_name = data_dir + "input_" + std::to_string(data_idx) + ".bin";
@@ -133,27 +149,25 @@ void NetworkForward::prepareInOutBuffer(int data_idx)
     parseShapeTxt(out_shape_name, on, oc, oh, ow);
     total_in_size = in * ic * ih * iw;
     total_out_size = on * oc * oh * ow;
-    DLDataType ndarr_type = DLDataType{kDLFloat, 32, 1};
-    if (dtype == "int32")
+    DLDataType ndin_type, ndout_type;
+    getDLDataTypeFromStr(in_type, ndin_type);
+    getDLDataTypeFromStr(out_type, ndout_type);
+    in_data = tvm::runtime::NDArray::Empty({in, ic, ih, iw}, ndin_type, dev);
+    out_data = tvm::runtime::NDArray::Empty({on, oc, oh, ow}, ndout_type, dev);
+    gt_data = tvm::runtime::NDArray::Empty({on, oc, oh, ow}, ndout_type, dev);
+    if (in_type == "float32" && out_type == "float32")
     {
-        ndarr_type.code = kDLInt;
+        loadInAndGTBuffer<float, float>(in_data_name, out_data_name);
     }
-    in_data = tvm::runtime::NDArray::Empty({in, ic, ih, iw}, ndarr_type, dev);
-    out_data = tvm::runtime::NDArray::Empty({on, oc, oh, ow}, ndarr_type, dev);
-    gt_data = tvm::runtime::NDArray::Empty({on, oc, oh, ow}, ndarr_type, dev);
-    if (dtype == "float32")
+    else if (in_type == "int32" && out_type == "uint8")
     {
-        loadInAndGTBuffer<float>(in_data_name, out_data_name);
-    }
-    else if (dtype == "int32")
-    {
-        loadInAndGTBuffer<int>(in_data_name, out_data_name);
+        loadInAndGTBuffer<int, uint8_t>(in_data_name, out_data_name);
     }
 }
 
 void NetworkForward::forwardOneTime(DLDeviceType dev_type)
 {
-    if (dtype == "float32" || dtype == "int32")
+    if (in_type == "float32" || in_type == "int32")
     {
         set_input(in_name, in_data);
         run();
@@ -178,26 +192,36 @@ void NetworkForward::checkOutAndGT()
 
 void NetworkForward::checkAccuracy()
 {
-    if (dtype == "float32")
+    if (out_type == "float32")
     {
         checkOutAndGT<float>();
     }
-    else if (dtype == "int32")
+    else if (out_type == "int32")
     {
         checkOutAndGT<int>();
     }
+    else if (out_type == "uint8")
+    {
+        checkOutAndGT<uint8_t>();
+    }
 }
 
-void NetworkForward::prepareNamePropertyMap()
+void NetworkForward::prepareNamePropertyMap(const std::string &model_version)
 {
-    name_prop_map.emplace(std::string("y_decoder"), CodecNetProperty("ydecoder_inout", "float32", "y_decoder_data"));
-    name_prop_map.emplace(std::string("y_encoder"), CodecNetProperty("yencoder_inout", "float32", "y_encoder_data"));
-    name_prop_map.emplace(std::string("z_decoder_int"), CodecNetProperty("zdecoder_inout", "int32", "z_decoder_data"));
-    name_prop_map.emplace(std::string("z_decoder"), CodecNetProperty("zdecoder_inout", "int32", "z_decoder_data"));
-    name_prop_map.emplace(std::string("z_encoder"), CodecNetProperty("zencoder_inout", "float32", "z_encoder_data"));
+    std::string zd_in_type = "float32", zd_out_type = "float32";
+    if (model_version == "u0.4.1")
+    {
+        zd_in_type = "int32";
+        zd_out_type = "uint8";
+    }
+    name_prop_map.emplace(std::string("y_decoder"), CodecNetProperty("ydecoder_inout", "float32", "float32", "y_decoder_data"));
+    name_prop_map.emplace(std::string("y_encoder"), CodecNetProperty("yencoder_inout", "float32", "float32", "y_encoder_data"));
+    name_prop_map.emplace(std::string("z_decoder_int"), CodecNetProperty("zdecoder_inout", zd_in_type, zd_out_type, "z_decoder_data"));
+    name_prop_map.emplace(std::string("z_decoder"), CodecNetProperty("zdecoder_inout", zd_in_type, zd_out_type, "z_decoder_data"));
+    name_prop_map.emplace(std::string("z_encoder"), CodecNetProperty("zencoder_inout", "float32", "float32", "z_encoder_data"));
 }
 
-void parseSimpleCfg(const std::string cfg_name, std::string &model_name, DLDeviceType &dev_type)
+void parseSimpleCfg(const std::string cfg_name, std::string &model_name, DLDeviceType &dev_type, std::string &model_version)
 {
     std::ifstream fin(cfg_name.c_str());
     std::getline(fin, model_name);
@@ -217,18 +241,20 @@ void parseSimpleCfg(const std::string cfg_name, std::string &model_name, DLDevic
     {
         dev_type = kDLExtDev;
     }
+    std::getline(fin, model_version);
+    std::cout << model_version << "\n";
     fin.close();
 }
 
 int main()
 {
-    std::string model_name;
+    std::string model_name, model_version;
     DLDeviceType dev_type;
-    parseSimpleCfg("./simple_cfg.txt", model_name, dev_type);
-    NetworkForward::prepareNamePropertyMap();
+    parseSimpleCfg("./simple_cfg.txt", model_name, dev_type, model_version);
+    NetworkForward::prepareNamePropertyMap(model_version);
     // dev type: kDLCPU, kDLCUDA, etc.
     NetworkForward nf(model_name, dev_type);
-    nf.prepareInOutBuffer(0);
+    nf.prepareInOutBuffer(model_version, 0);
     std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
     nf.forwardOneTime(dev_type);
     std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();

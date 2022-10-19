@@ -19,11 +19,11 @@ model_data_map = {
     'z_encoder': 'zencoder_inout'
 }
 model_type_map = {
-    'y_decoder': np.float32,
-    'y_encoder': np.float32,
-    'z_decoder_int': np.int32,
-    'z_decoder': np.int32,
-    'z_encoder': np.float32
+    'y_decoder': (np.float32, np.float32),
+    'y_encoder': (np.float32, np.float32),
+    'z_decoder_int': (np.int32, np.uint8),
+    'z_decoder': (np.int32, np.uint8),
+    'z_encoder': (np.float32, np.float32)
 }
 model_inname_map = {
     'y_decoder': 'y_decoder_data',
@@ -39,8 +39,8 @@ def parseSimpleCfg(cfg_fn):
         res = []
         for line in lines:
             res.append(line.strip())
-        model_name, target = res[0], res[1]
-    return model_name, target
+        model_name, target, model_version = res[0], res[1], res[2]
+    return model_name, target, model_version
 
 def parseDataShapeFromTxt(file_name):
     with open(file_name, 'r') as fp:
@@ -48,13 +48,15 @@ def parseDataShapeFromTxt(file_name):
         shape = eval(content)
         return shape
 
-def prepareData(model_name):
+def prepareData(model_name, model_version, data_idx):
     dir_name = model_data_map[model_name]
-    dtype = model_type_map[model_name]
-    input_np = np.fromfile('{}/input_0.bin'.format(dir_name), dtype=dtype)
-    output_np = np.fromfile('{}/output_0.bin'.format(dir_name), dtype=dtype)
-    input_shape = parseDataShapeFromTxt('{}/input_shape_0.txt'.format(dir_name))
-    output_shape = parseDataShapeFromTxt('{}/output_shape_0.txt'.format(dir_name))
+    in_type, out_type = model_type_map[model_name]
+    if model_version == 's0.4.1':
+        in_type, out_type = np.float32, np.float32
+    input_np = np.fromfile('{}/{}/input_{}.bin'.format(dir_name, model_version, data_idx), dtype=in_type)
+    output_np = np.fromfile('{}/{}/output_{}.bin'.format(dir_name, model_version, data_idx), dtype=out_type)
+    input_shape = parseDataShapeFromTxt('{}/{}/input_shape_{}.txt'.format(dir_name, model_version, data_idx))
+    output_shape = parseDataShapeFromTxt('{}/{}/output_shape_{}.txt'.format(dir_name, model_version, data_idx))
     input_np = input_np.reshape(input_shape)
     output_np = output_np.reshape(output_shape)
     return input_np, output_np, input_shape, output_shape
@@ -149,19 +151,19 @@ def checkOnnxModel(onnx_model):
 
 if __name__ == '__main__':
     # tune_method: 'autotvm' or 'autoscheduler'
-    debug_flag, save_lib_flag, tune_flag, tune_method = False, True, True, 'autotvm'
+    debug_flag, save_lib_flag, tune_flag, tune_method, data_idx = False, True, False, 'autotvm', 0
 
-    model_name, target = parseSimpleCfg('./simple_cfg.txt')
+    model_name, target, model_version = parseSimpleCfg('./simple_cfg.txt')
     input_name = model_inname_map[model_name]
     debug_dir = './debug_{}'.format(model_name)
-    onnx_model = onnx.load('./onnx_model_by/{}.onnx'.format(model_name))
+    onnx_model = onnx.load('./{}_onnx/{}.onnx'.format(model_version, model_name))
     if save_lib_flag:
         save_lib_path = './libs/{}.so'.format(model_name)
     else:
         save_lib_path = None
     checkOnnxModel(onnx_model)
 
-    input_np, output_np, input_shape, output_shape = prepareData(model_name)
+    input_np, output_np, input_shape, output_shape = prepareData(model_name, model_version, data_idx)
 
     mod, params = runRelayFrontEnd(input_name, onnx_model, input_np)
     tvm_output = None
