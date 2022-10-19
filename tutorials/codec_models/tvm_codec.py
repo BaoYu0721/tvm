@@ -1,13 +1,14 @@
 import onnx
 from onnx import numpy_helper
 import numpy as np
+import os
 import tvm.relay as relay
 import tvm
 from tvm.contrib import graph_executor
 from tvm.contrib.debugger.debug_executor import GraphModuleDebug
 
 import tvm.auto_scheduler as auto_scheduler
-from tvm.autotvm.tuner import XGBTuner
+from tvm.autotvm.tuner import XGBTuner, GATuner, RandomTuner, GridSearchTuner
 from tvm import autotvm
 
 model_data_map = {
@@ -83,35 +84,54 @@ def runGraph(input_name, module, img_data, output_shape):
     tvm_output = module.get_output(0).numpy()
     return tvm_output
 
-def tuneModel(target, mod, params, tuning_record_name):
-    number = 10
-    repeat = 1
-    min_repeat_ms = 0  # since we're tuning on a CPU, can be set to 0
-    timeout = 10  # in seconds
-    runner = autotvm.LocalRunner(number=number, repeat=repeat, timeout=timeout, min_repeat_ms=min_repeat_ms, enable_cpu_cache_flush=True)
+def getTuningOption(model_name, target):
+    autotvm_logname = 'autotvm_{}_{}.log'.format(model_name, target)
     tuning_option = {
-        "tuner": "xgb",
-        "trials": 10,
-        "early_stopping": 10,
-        "measure_option": autotvm.measure_option(
-            builder=autotvm.LocalBuilder(build_func="default"), runner=runner
+        'log_filename': autotvm_logname,
+        'tuner': 'xgb',
+        'n_trial': 2000,
+        'early_stopping': 600,
+        'measure_option': autotvm.measure_option(
+            builder=autotvm.LocalBuilder(timeout=10),
+            runner=autotvm.LocalRunner(number=20, repeat=3, timeout=4, min_repeat_ms=150)
         ),
-        "tuning_records": tuning_record_name,
+        'use_transfer_learning': True
     }
-    # begin by extracting the tasks from the onnx model
-    tasks = autotvm.task.extract_from_program(mod["main"], target=target, params=params)
-    for i, task in enumerate(tasks):
-        prefix = "[Task %2d/%2d] " % (i + 1, len(tasks))
-        tuner_obj = XGBTuner(task, loss_type='rank')
+    return tuning_option
+
+def autoTVMTune(target, mod, params, tuning_option):
+    tasks = autotvm.task.extract_from_program(mod['main'], params, target)
+    tmp_log_file = tuning_option['log_filename'] + '.tmp'
+    if os.path.exists(tmp_log_file):
+        os.remove(tmp_log_file)
+    for i, tsk in enumerate(reversed(tasks)):
+        prefix = '[Task %2d/%2d] ' % (i + 1, len(tasks))
+        if tuning_option['tuner'] == 'xgb' or tuning_option['tuner'] == 'xgb-rank':
+            tuner_obj = XGBTuner(tsk, loss_type='rank')
+        elif tuning_option['tuner'] == 'ga':
+            tuner_obj = GATuner(tsk, pop_size=100)
+        elif tuning_option['tuner'] == 'random':
+            tuner_obj = RandomTuner(tsk)
+        elif tuning_option['tuner'] == 'gridsearch':
+            tuner_obj = GridSearchTuner(tsk)
+        else:
+            raise ValueError('Invalid tuner: ' + tuning_option['tuner'])
+
+        if tuning_option['use_transfer_learning']:
+            if os.path.exists(tmp_log_file):
+                tuner_obj.load_history(autotvm.record.load_from_file(tmp_log_file))
+        tsk_trial = min(tuning_option['n_trial'], len(tsk.config_space))
         tuner_obj.tune(
-            n_trial=min(tuning_option["trials"], len(task.config_space)),
-            early_stopping=tuning_option["early_stopping"],
-            measure_option=tuning_option["measure_option"],
+            n_trial=tsk_trial,
+            early_stopping=tuning_option['early_stopping'],
+            measure_option=tuning_option['measure_option'],
             callbacks=[
-                autotvm.callback.progress_bar(tuning_option["trials"], prefix=prefix),
-                autotvm.callback.log_to_file(tuning_option["tuning_records"]),
-            ],
+                autotvm.callback.progress_bar(tsk_trial, prefix=prefix),
+                autotvm.callback.log_to_file(tmp_log_file)
+            ]
         )
+    autotvm.record.pick_best(tmp_log_file, tuning_option['log_filename'])
+    os.remove(tmp_log_file)
 
 def checkOnnxModel(onnx_model):
     model_outname =[node.name for node in onnx_model.graph.output]
@@ -128,11 +148,12 @@ def checkOnnxModel(onnx_model):
         print (w.dtype)
 
 if __name__ == '__main__':
-    debug_flag, save_lib_flag = False, True
+    # tune_method: 'autotvm' or 'autoscheduler'
+    debug_flag, save_lib_flag, tune_flag, tune_method = False, True, True, 'autotvm'
+
     model_name, target = parseSimpleCfg('./simple_cfg.txt')
     input_name = model_inname_map[model_name]
     debug_dir = './debug_{}'.format(model_name)
-    tuning_record_name = './{}_autotuning.json'.format(model_name)
     onnx_model = onnx.load('./onnx_model_by/{}.onnx'.format(model_name))
     if save_lib_flag:
         save_lib_path = './libs/{}.so'.format(model_name)
@@ -143,14 +164,19 @@ if __name__ == '__main__':
     input_np, output_np, input_shape, output_shape = prepareData(model_name)
 
     mod, params = runRelayFrontEnd(input_name, onnx_model, input_np)
+    tvm_output = None
 
-    module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
-    tvm_output = runGraph(input_name, module, input_np, output_shape)
+    if tune_flag:
+        tuning_option = getTuningOption(model_name, target)
+        autoTVMTune(target, mod, params, tuning_option)
+        with autotvm.apply_history_best(tuning_option['log_filename']):
+            module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
+        tvm_output = runGraph(input_name, module, input_np, output_shape)
+    else:
+        # 不 tune performance， 直接运行
+        module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
+        tvm_output = runGraph(input_name, module, input_np, output_shape)
 
-    # tuneModel(target, mod, params, tuning_record_name)
-    # with autotvm.apply_history_best(tuning_record_name):
-    #     module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
-    # tvm_output = runGraph(input_name, module, input_np, output_shape)
-
-    err = np.abs(tvm_output.astype(np.float32) - output_np.astype(np.float32))
-    print (err.max(), err.min(), err.mean())
+    if tvm_output is not None:
+        err = np.abs(tvm_output.astype(np.float32) - output_np.astype(np.float32))
+        print (err.max(), err.min(), err.mean())
