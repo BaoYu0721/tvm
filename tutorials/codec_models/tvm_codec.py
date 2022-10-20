@@ -9,6 +9,7 @@ from tvm.contrib.debugger.debug_executor import GraphModuleDebug
 
 import tvm.auto_scheduler as auto_scheduler
 from tvm.autotvm.tuner import XGBTuner, GATuner, RandomTuner, GridSearchTuner
+from tvm.autotvm.graph_tuner import DPTuner, PBQPTuner
 from tvm import autotvm
 
 model_data_map = {
@@ -88,20 +89,41 @@ def runGraph(input_name, module, img_data, output_shape):
 
 def getTuningOption(model_name, target):
     autotvm_logname = 'autotvm_{}_{}.log'.format(model_name, target)
-    tuning_option = {
-        'log_filename': autotvm_logname,
-        'tuner': 'xgb',
-        'n_trial': 2000,
-        'early_stopping': 600,
-        'measure_option': autotvm.measure_option(
-            builder=autotvm.LocalBuilder(timeout=10),
-            runner=autotvm.LocalRunner(number=20, repeat=3, timeout=4, min_repeat_ms=150)
-        ),
-        'use_transfer_learning': True
-    }
+    graph_opt_filename = 'autotvm_{}_{}_graph_opt.log'.format(model_name, target)
+    tuning_option = None
+    if target == 'cuda':
+        tuning_option = {
+            'log_filename': autotvm_logname,
+            'tuner': 'xgb',
+            'n_trial': 2000,
+            'early_stopping': 600,
+            'measure_option': autotvm.measure_option(
+                builder=autotvm.LocalBuilder(timeout=10),
+                runner=autotvm.LocalRunner(number=20, repeat=3, timeout=4, min_repeat_ms=150)
+            ),
+            'use_transfer_learning': True,
+            'use_graph_tuning': False, # graph tuning is not implemented yet for cuda
+            'use_DP': False,
+            'graph_opt_filename': graph_opt_filename
+        }
+    elif target == 'llvm':
+        tuning_option = {
+            'log_filename': autotvm_logname,
+            'tuner': 'random',
+            'n_trial': 2000,
+            'early_stopping': None,
+            'measure_option': autotvm.measure_option(
+                builder=autotvm.LocalBuilder(),
+                runner=autotvm.LocalRunner(number=1, repeat=10, min_repeat_ms=0, enable_cpu_cache_flush=True)
+            ),
+            'use_transfer_learning': False,
+            'use_graph_tuning': True,
+            'use_DP': False,
+            'graph_opt_filename': graph_opt_filename
+        }
     return tuning_option
 
-def autoTVMTune(target, mod, params, tuning_option):
+def autoTVMTuneKernel(target, mod, params, tuning_option):
     tasks = autotvm.task.extract_from_program(mod['main'], params, target)
     tmp_log_file = tuning_option['log_filename'] + '.tmp'
     if os.path.exists(tmp_log_file):
@@ -135,6 +157,18 @@ def autoTVMTune(target, mod, params, tuning_option):
     autotvm.record.pick_best(tmp_log_file, tuning_option['log_filename'])
     os.remove(tmp_log_file)
 
+def autoTVMTuneGraph(mod, target, input_shapes, tuning_option):
+    # 根据注释，TuneGraph 就是同时考虑 kernel 的运行时间和 layout 的转换时间
+    target_ops = [
+        relay.op.get('nn.conv2d'),
+        relay.op.get('nn.conv2d_transpose'),
+    ]
+    GraphTuner = DPTuner if tuning_option['use_DP'] else PBQPTuner
+    executor = GraphTuner(mod['main'], input_shapes, tuning_option['log_filename'], target_ops, target)
+    executor.benchmark_layout_transform(min_exec_num=2000)
+    executor.run()
+    executor.write_opt_sch2record_file(tuning_option['graph_opt_filename'])
+
 def checkOnnxModel(onnx_model):
     model_outname =[node.name for node in onnx_model.graph.output]
     input_name_all = [node.name for node in onnx_model.graph.input]
@@ -150,8 +184,9 @@ def checkOnnxModel(onnx_model):
         print (w.dtype)
 
 if __name__ == '__main__':
+    tune_flag = False
     # tune_method: 'autotvm' or 'autoscheduler'
-    debug_flag, save_lib_flag, tune_flag, tune_method, data_idx = False, True, False, 'autotvm', 0
+    debug_flag, save_lib_flag, tune_method, data_idx = False, True, 'autotvm', 0
 
     model_name, target, model_version = parseSimpleCfg('./simple_cfg.txt')
     input_name = model_inname_map[model_name]
@@ -170,10 +205,19 @@ if __name__ == '__main__':
 
     if tune_flag:
         tuning_option = getTuningOption(model_name, target)
-        autoTVMTune(target, mod, params, tuning_option)
+        if tuning_option is None:
+            raise ValueError('target not supported!')
+
+        autoTVMTuneKernel(target, mod, params, tuning_option)
         with autotvm.apply_history_best(tuning_option['log_filename']):
             module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
-        tvm_output = runGraph(input_name, module, input_np, output_shape)
+            tvm_output = runGraph(input_name, module, input_np, output_shape)
+
+        if tuning_option['use_graph_tuning']:
+            autoTVMTuneGraph(mod, target, {input_name: input_shape}, tuning_option)
+            with autotvm.apply_graph_best(tuning_option['graph_opt_filename']):
+                module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
+                tvm_output = runGraph(input_name, module, input_np, output_shape)
     else:
         # 不 tune performance， 直接运行
         module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)

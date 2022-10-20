@@ -1,7 +1,7 @@
 TVM_ROOT=$(shell cd ../..; pwd)
 DMLC_CORE=${TVM_ROOT}/3rdparty/dmlc-core
 
-PKG_CFLAGS = -std=c++17 -g -ggdb -fPIC\
+PKG_CFLAGS = -std=c++17 -O3 -fPIC\
 	-I${TVM_ROOT}/include\
 	-I${DMLC_CORE}/include\
 	-I${TVM_ROOT}/3rdparty/dlpack/include\
