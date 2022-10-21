@@ -6,6 +6,7 @@ import tvm.relay as relay
 import tvm
 from tvm.contrib import graph_executor
 from tvm.contrib.debugger.debug_executor import GraphModuleDebug
+from tvm.relay.op.contrib.tensorrt import partition_for_tensorrt
 
 import tvm.auto_scheduler as auto_scheduler
 from tvm.autotvm.tuner import XGBTuner, GATuner, RandomTuner, GridSearchTuner
@@ -185,10 +186,12 @@ def checkOnnxModel(onnx_model):
 
 if __name__ == '__main__':
     tune_flag = False
+    use_tensorrt = True
     # tune_method: 'autotvm' or 'autoscheduler'
     debug_flag, save_lib_flag, tune_method, data_idx = False, True, 'autotvm', 0
 
     model_name, target, model_version = parseSimpleCfg('./simple_cfg.txt')
+    use_tensorrt = use_tensorrt and (target == 'cuda')  # 只有在 cuda 下才可以考虑用 tensorrt
     input_name = model_inname_map[model_name]
     debug_dir = './debug_{}'.format(model_name)
     onnx_model = onnx.load('./{}_onnx/{}.onnx'.format(model_version, model_name))
@@ -201,6 +204,8 @@ if __name__ == '__main__':
     input_np, output_np, input_shape, output_shape = prepareData(model_name, model_version, data_idx)
 
     mod, params = runRelayFrontEnd(input_name, onnx_model, input_np)
+    if use_tensorrt:
+        mod = partition_for_tensorrt(mod, params)
     tvm_output = None
 
     if tune_flag:
