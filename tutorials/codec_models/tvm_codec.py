@@ -14,11 +14,11 @@ from tvm.autotvm.graph_tuner import DPTuner, PBQPTuner
 from tvm import autotvm
 
 model_data_map = {
-    'y_decoder': 'ydecoder_inout',
-    'y_encoder': 'yencoder_inout',
-    'z_decoder_int': 'zdecoder_inout',
-    'z_decoder': 'zdecoder_inout',
-    'z_encoder': 'zencoder_inout'
+    'y_decoder': './test_data/ydecoder_inout',
+    'y_encoder': './test_data/yencoder_inout',
+    'z_decoder_int': './test_data/zdecoder_inout',
+    'z_decoder': './test_data/zdecoder_inout',
+    'z_encoder': './test_data/zencoder_inout'
 }
 model_type_map = {
     'y_decoder': (np.float32, np.float32),
@@ -89,8 +89,8 @@ def runGraph(input_name, module, img_data, output_shape):
     return tvm_output
 
 def getTuningOption(model_name, target):
-    autotvm_logname = 'autotvm_{}_{}.log'.format(model_name, target)
-    graph_opt_filename = 'autotvm_{}_{}_graph_opt.log'.format(model_name, target)
+    autotvm_logname = './tune_logs/autotvm_{}_{}.log'.format(model_name, target)
+    graph_opt_filename = './tune_logs/autotvm_{}_{}_graph_opt.log'.format(model_name, target)
     tuning_option = None
     if target == 'cuda':
         tuning_option = {
@@ -186,7 +186,7 @@ def checkOnnxModel(onnx_model):
 
 if __name__ == '__main__':
     tune_flag = False
-    use_tensorrt = True
+    use_tensorrt = False
     # tune_method: 'autotvm' or 'autoscheduler'
     debug_flag, save_lib_flag, tune_method, data_idx = False, True, 'autotvm', 0
 
@@ -194,7 +194,7 @@ if __name__ == '__main__':
     use_tensorrt = use_tensorrt and (target == 'cuda')  # 只有在 cuda 下才可以考虑用 tensorrt
     input_name = model_inname_map[model_name]
     debug_dir = './debug_{}'.format(model_name)
-    onnx_model = onnx.load('./{}_onnx/{}.onnx'.format(model_version, model_name))
+    onnx_model = onnx.load('./models/{}_onnx/{}.onnx'.format(model_version, model_name))
     if save_lib_flag:
         save_lib_path = './libs/{}.so'.format(model_name)
     else:

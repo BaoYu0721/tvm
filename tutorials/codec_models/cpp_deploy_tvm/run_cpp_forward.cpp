@@ -95,7 +95,7 @@ NetworkForward::NetworkForward(const std::string mod_name, DLDeviceType dev_type
     this->mod_name = mod_name;
     dev.device_type = dev_type;
     dev.device_id = 0;
-    std::string dylib_path = "./libs/" + mod_name + ".so";
+    std::string dylib_path = "../libs/" + mod_name + ".so";
     tvm::runtime::Module mod_factory = tvm::runtime::Module::LoadFromFile(dylib_path);
     tvm::runtime::Module graph_exe_mod = mod_factory.GetFunction("default")(dev);
     set_input = graph_exe_mod.GetFunction("set_input");
@@ -214,11 +214,11 @@ void NetworkForward::prepareNamePropertyMap(const std::string &model_version)
         zd_in_type = "int32";
         zd_out_type = "uint8";
     }
-    name_prop_map.emplace(std::string("y_decoder"), CodecNetProperty("ydecoder_inout", "float32", "float32", "y_decoder_data"));
-    name_prop_map.emplace(std::string("y_encoder"), CodecNetProperty("yencoder_inout", "float32", "float32", "y_encoder_data"));
-    name_prop_map.emplace(std::string("z_decoder_int"), CodecNetProperty("zdecoder_inout", zd_in_type, zd_out_type, "z_decoder_data"));
-    name_prop_map.emplace(std::string("z_decoder"), CodecNetProperty("zdecoder_inout", zd_in_type, zd_out_type, "z_decoder_data"));
-    name_prop_map.emplace(std::string("z_encoder"), CodecNetProperty("zencoder_inout", "float32", "float32", "z_encoder_data"));
+    name_prop_map.emplace(std::string("y_decoder"), CodecNetProperty("../test_data/ydecoder_inout", "float32", "float32", "y_decoder_data"));
+    name_prop_map.emplace(std::string("y_encoder"), CodecNetProperty("../test_data/yencoder_inout", "float32", "float32", "y_encoder_data"));
+    name_prop_map.emplace(std::string("z_decoder_int"), CodecNetProperty("../test_data/zdecoder_inout", zd_in_type, zd_out_type, "z_decoder_data"));
+    name_prop_map.emplace(std::string("z_decoder"), CodecNetProperty("../test_data/zdecoder_inout", zd_in_type, zd_out_type, "z_decoder_data"));
+    name_prop_map.emplace(std::string("z_encoder"), CodecNetProperty("../test_data/zencoder_inout", "float32", "float32", "z_encoder_data"));
 }
 
 void parseSimpleCfg(const std::string cfg_name, std::string &model_name, DLDeviceType &dev_type, std::string &model_version)
@@ -250,7 +250,7 @@ int main()
 {
     std::string model_name, model_version;
     DLDeviceType dev_type;
-    parseSimpleCfg("./simple_cfg.txt", model_name, dev_type, model_version);
+    parseSimpleCfg("../simple_cfg.txt", model_name, dev_type, model_version);
     NetworkForward::prepareNamePropertyMap(model_version);
     // dev type: kDLCPU, kDLCUDA, etc.
     NetworkForward nf(model_name, dev_type);
