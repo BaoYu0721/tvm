@@ -41,8 +41,8 @@ def parseSimpleCfg(cfg_fn):
         res = []
         for line in lines:
             res.append(line.strip())
-        model_name, target, model_version = res[0], res[1], res[2]
-    return model_name, target, model_version
+        model_name, target, model_version, data_idx = res[0], res[1], res[2], int(res[3])
+    return model_name, target, model_version, data_idx
 
 def parseDataShapeFromTxt(file_name):
     with open(file_name, 'r') as fp:
@@ -188,9 +188,9 @@ if __name__ == '__main__':
     tune_flag = False
     use_tensorrt = False
     # tune_method: 'autotvm' or 'autoscheduler'
-    debug_flag, save_lib_flag, tune_method, data_idx = False, True, 'autotvm', 0
+    debug_flag, save_lib_flag, tune_method = False, True, 'autotvm'
 
-    model_name, target, model_version = parseSimpleCfg('./simple_cfg.txt')
+    model_name, target, model_version, data_idx = parseSimpleCfg('./simple_cfg.txt')
     use_tensorrt = use_tensorrt and (target == 'cuda')  # 只有在 cuda 下才可以考虑用 tensorrt
     input_name = model_inname_map[model_name]
     debug_dir = './debug_{}'.format(model_name)
