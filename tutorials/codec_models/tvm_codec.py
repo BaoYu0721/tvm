@@ -68,9 +68,9 @@ def runRelayFrontEnd(input_name, onnx_model, img_data):
     mod, params = relay.frontend.from_onnx(onnx_model, shape_dict)
     return mod, params
 
-def createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path):
+def createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path, pass_ctx_config=None):
     # with tvm.transform.PassContext(opt_level=3, config={"relay.FuseOps.max_depth": 1}):
-    with tvm.transform.PassContext(opt_level=3):
+    with tvm.transform.PassContext(opt_level=3, config=pass_ctx_config):
         lib = relay.build(mod, target=target, params=params)
     if save_lib_path is not None:
         lib.export_library(save_lib_path)
@@ -88,7 +88,7 @@ def runGraph(input_name, module, img_data, output_shape):
     tvm_output = module.get_output(0).numpy()
     return tvm_output
 
-def getTuningOption(model_name, target):
+def getAutoTVMTuningOption(model_name, target):
     autotvm_logname = './tune_logs/autotvm_{}_{}.log'.format(model_name, target)
     graph_opt_filename = './tune_logs/autotvm_{}_{}_graph_opt.log'.format(model_name, target)
     tuning_option = None
@@ -170,6 +170,29 @@ def autoTVMTuneGraph(mod, target, input_shapes, tuning_option):
     executor.run()
     executor.write_opt_sch2record_file(tuning_option['graph_opt_filename'])
 
+def autoSchedulerTune(log_file, target, mod, params, debug_flag):
+    tasks, task_weights = auto_scheduler.extract_tasks(mod['main'], params, target)
+    if debug_flag:
+        for idx, task in enumerate(tasks):
+            print ('========== Task %d  (workload key: %s) ==========' % (idx, task.workload_key))
+            print (task.compute_dag)
+
+    if target == 'cuda':
+        measure_ctx = auto_scheduler.LocalRPCMeasureContext(repeat=2, min_repeat_ms=300, timeout=10)
+        as_runner = measure_ctx.runner
+    elif target == 'llvm':
+        as_runner = auto_scheduler.LocalRunner(repeat=10, enable_cpu_cache_flush=True)
+    else:
+        as_runner = None
+    tuner = auto_scheduler.TaskScheduler(tasks, task_weights)
+    tune_option = auto_scheduler.TuningOptions(
+        num_measure_trials=900*len(tasks),
+        # num_measure_trials=4,
+        runner=as_runner,
+        measure_callbacks=[auto_scheduler.RecordToFile(log_file)],
+    )
+    tuner.tune(tune_option)
+
 def checkOnnxModel(onnx_model):
     model_outname =[node.name for node in onnx_model.graph.output]
     input_name_all = [node.name for node in onnx_model.graph.input]
@@ -206,22 +229,32 @@ if __name__ == '__main__':
     mod, params = runRelayFrontEnd(input_name, onnx_model, input_np)
     if use_tensorrt:
         mod = partition_for_tensorrt(mod, params)
-    tvm_output = None
+    tvm_output, pass_ctx_config = None, None
 
     if tune_flag:
-        tuning_option = getTuningOption(model_name, target)
-        if tuning_option is None:
-            raise ValueError('target not supported!')
+        if tune_method == 'autotvm':
+            tuning_option = getAutoTVMTuningOption(model_name, target)
+            if tuning_option is None:
+                raise ValueError('target not supported!')
 
-        autoTVMTuneKernel(target, mod, params, tuning_option)
-        with autotvm.apply_history_best(tuning_option['log_filename']):
-            module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
-            tvm_output = runGraph(input_name, module, input_np, output_shape)
-
-        if tuning_option['use_graph_tuning']:
-            autoTVMTuneGraph(mod, target, {input_name: input_shape}, tuning_option)
-            with autotvm.apply_graph_best(tuning_option['graph_opt_filename']):
+            autoTVMTuneKernel(target, mod, params, tuning_option)
+            with autotvm.apply_history_best(tuning_option['log_filename']):
                 module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
+                tvm_output = runGraph(input_name, module, input_np, output_shape)
+
+            if tuning_option['use_graph_tuning']:
+                autoTVMTuneGraph(mod, target, {input_name: input_shape}, tuning_option)
+                with autotvm.apply_graph_best(tuning_option['graph_opt_filename']):
+                    module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
+                    tvm_output = runGraph(input_name, module, input_np, output_shape)
+        else:
+            # use auto_scheduler
+            log_file = './tune_logs/autoscheduler_{}_{}.log'.format(model_name, target)
+            autoSchedulerTune(log_file, target, mod, params, debug_flag)
+
+            with auto_scheduler.ApplyHistoryBest(log_file):
+                pass_ctx_config = {'relay.backend.use_auto_scheduler': True}
+                module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path, pass_ctx_config)
                 tvm_output = runGraph(input_name, module, input_np, output_shape)
     else:
         # 不 tune performance， 直接运行
