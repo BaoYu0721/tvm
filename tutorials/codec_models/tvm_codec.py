@@ -229,6 +229,7 @@ if __name__ == '__main__':
     mod, params = runRelayFrontEnd(input_name, onnx_model, input_np)
     if use_tensorrt:
         mod = partition_for_tensorrt(mod, params)
+        print(mod['main'])
     tvm_output, pass_ctx_config = None, None
 
     if tune_flag:
