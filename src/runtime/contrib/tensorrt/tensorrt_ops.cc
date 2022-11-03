@@ -994,7 +994,7 @@ class Conv2DTransposeOpConverter : public TensorRTOpConverter {
     ICHECK_EQ(params->node.GetAttr<std::vector<std::string>>("data_layout")[0], "NCHW");
     ICHECK(params->node.GetAttr<std::vector<std::string>>("out_layout")[0] == "" ||
            params->node.GetAttr<std::vector<std::string>>("out_layout")[0] == "NCHW");
-    ICHECK_EQ(params->node.GetAttr<std::vector<std::string>>("kernel_layout")[0], "OIHW");
+    ICHECK_EQ(params->node.GetAttr<std::vector<std::string>>("kernel_layout")[0], "IOHW");
     auto str_dilation = params->node.GetAttr<std::vector<std::string>>("dilation");
     ICHECK(std::stoi(str_dilation[0]) == 1 && std::stoi(str_dilation[1]) == 1);
     auto str_strides = params->node.GetAttr<std::vector<std::string>>("strides");

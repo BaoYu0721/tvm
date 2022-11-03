@@ -154,7 +154,7 @@ def partition_for_tensorrt(
                     "nn.conv1d": ["NCW", "default"],
                     "nn.conv2d": ["NCHW", "default"],
                     "nn.conv3d": ["NCDHW", "default"],
-                    "nn.conv2d_transpose": ["NCHW", "default"],
+                    "nn.conv2d_transpose": ["NCHW", "IOHW"],
                 }
             ),
             transform.FoldConstant(),
@@ -565,7 +565,7 @@ def conv2d_transpose_checker(
     if attrs.data_layout != "NCHW":
         logger.info(f"{op_name}: data_layout is {attrs.data_layout} but must be NCHW.")
         return False
-    if attrs.kernel_layout != "OIHW":
+    if attrs.kernel_layout != "IOHW":
         logger.info(f"{op_name}: kernel_layout is {attrs.kernel_layout} but must be OIHW.")
         return False
     if attrs.out_layout and attrs.out_layout != "NCHW":
