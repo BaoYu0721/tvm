@@ -1,4 +1,4 @@
-model_name: s0_4_1_y_encoder
+model_name: s0_4_1_z_decoder
 target: cuda
 data_idx: 0
 
@@ -7,6 +7,9 @@ use_tvm_tune: false
 # tvm_tune_method: autotvm or autoscheduler
 tvm_tune_method: autotvm
 use_tvm_trt_integration: false
+
+# rknn config
+rknn_use_quant: false
 
 s0_4_1_y_decoder:
   model_path: ./models/s0.4.1_onnx/y_decoder.onnx
