@@ -13,3 +13,6 @@
 [submodule "3rdparty/cutlass"]
 	path = 3rdparty/cutlass
 	url = https://github.com/NVIDIA/cutlass.git
+[submodule "tutorials/codec_models/yaml-cpp"]
+	path = tutorials/codec_models/yaml-cpp
+	url = https://github.com/jbeder/yaml-cpp.git

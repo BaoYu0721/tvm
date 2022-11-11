@@ -1,0 +1,110 @@
+model_name: s0_4_1_y_encoder
+target: cuda
+data_idx: 0
+
+# tvm python settings
+use_tvm_tune: false
+# tvm_tune_method: autotvm or autoscheduler
+tvm_tune_method: autotvm
+use_tvm_trt_integration: false
+
+s0_4_1_y_decoder:
+  model_path: ./models/s0.4.1_onnx/y_decoder.onnx
+  data_dir: ./test_data/ydecoder_inout/s0.4.1/
+  in_types: ["float32"]
+  out_types: ["float32"]
+  in_tensor_names: ["y_decoder_data"]
+  out_tensor_names: ["y_decoder_out"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]
+s0_4_1_y_encoder:
+  model_path: ./models/s0.4.1_onnx/y_encoder.onnx
+  data_dir: ./test_data/yencoder_inout/s0.4.1/
+  in_types: ["float32"]
+  out_types: ["float32"]
+  in_tensor_names: ["y_encoder_data"]
+  out_tensor_names: ["y_encoder_out"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]
+s0_4_1_z_decoder:
+  model_path: ./models/s0.4.1_onnx/z_decoder.onnx
+  data_dir: ./test_data/zdecoder_inout/s0.4.1/
+  in_types: ["float32"]
+  out_types: ["float32"]
+  in_tensor_names: ["z_decoder_data"]
+  out_tensor_names: ["z_decoder_out"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]
+s0_4_1_z_encoder:
+  model_path: ./models/s0.4.1_onnx/z_encoder.onnx
+  data_dir: ./test_data/zencoder_inout/s0.4.1/
+  in_types: ["float32"]
+  out_types: ["float32"]
+  in_tensor_names: ["z_encoder_data"]
+  out_tensor_names: ["z_encoder_out"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]
+
+u0_4_1_y_decoder:
+  model_path: ./models/u0.4.1_onnx/y_decoder.onnx
+  data_dir: ./test_data/ydecoder_inout/u0.4.1/
+  in_types: ["float32"]
+  out_types: ["float32"]
+  in_tensor_names: ["y_decoder_data"]
+  out_tensor_names: ["y_decoder_out"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]
+u0_4_1_y_encoder:
+  model_path: ./models/u0.4.1_onnx/y_encoder.onnx
+  data_dir: test_data/yencoder_inout/u0.4.1/
+  in_types: ["float32"]
+  out_types: ["float32"]
+  in_tensor_names: ["y_encoder_data"]
+  out_tensor_names: ["y_encoder_out"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]
+u0_4_1_z_decoder_int:
+  model_path: ./models/u0.4.1_onnx/z_decoder_int.onnx
+  data_dir: ./test_data/zdecoder_inout/u0.4.1/
+  in_types: ["int32"]
+  out_types: ["uint8"]
+  in_tensor_names: ["z_decoder_data"]
+  out_tensor_names: ["z_decoder_out"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]
+u0_4_1_z_decoder:
+  model_path: ./models/u0.4.1_onnx/z_decoder.onnx
+  data_dir: ./test_data/zdecoder_inout/u0.4.1/
+  in_types: ["int32"]
+  out_types: ["uint8"]
+  in_tensor_names: ["z_decoder_data"]
+  out_tensor_names: ["z_decoder_out"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]
+u0_4_1_z_encoder:
+  model_path: ./models/u0.4.1_onnx/z_encoder.onnx
+  data_dir: ./test_data/zencoder_inout/u0.4.1/
+  in_types: ["float32"]
+  out_types: ["float32"]
+  in_tensor_names: ["z_encoder_data"]
+  out_tensor_names: ["z_encoder_out"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]

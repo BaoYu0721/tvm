@@ -17,15 +17,20 @@ set(TVM_INCLUDE_DIR
 )
 set(TVM_LIB_DIR ${TVM_ROOT}/build)
 
+set(yaml-cpp_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/include)
+set(yaml-cpp_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/build/)
+
 find_library(TVM_LIB_PATH tvm_runtime HINTS ${TVM_LIB_DIR})
+find_library(YAML_LIB_PATH yaml-cpp HINTS ${yaml-cpp_LIB_DIR})
 
 set(TVM_EXE "cpp_deploy_tvm")
 add_executable(${TVM_EXE} 
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_deploy_tvm/run_cpp_forward.cpp
 )
-include_directories(${TVM_INCLUDE_DIR} ${PROJECT_INCLUDE_DIR})
+include_directories(${TVM_INCLUDE_DIR} ${PROJECT_INCLUDE_DIR} ${yaml-cpp_INCLUDE_DIR})
 target_link_libraries(${TVM_EXE} PUBLIC
-    -ltvm_runtime
+    ${TVM_LIB_PATH}
+    ${YAML_LIB_PATH}
 )
 
 set(TRT_INCLUDE_DIR 
@@ -40,9 +45,10 @@ set(TRT_EXE "pure_trt_exe")
 add_executable(${TRT_EXE} 
     ${CMAKE_CURRENT_SOURCE_DIR}/pure_trt/pure_trt.cpp
 )
-include_directories(${TRT_INCLUDE_DIR} ${PROJECT_INCLUDE_DIR})
+include_directories(${TRT_INCLUDE_DIR} ${PROJECT_INCLUDE_DIR} ${yaml-cpp_INCLUDE_DIR})
 target_link_libraries(${TRT_EXE} PUBLIC
     -lnvinfer
     -lcudart
     -lnvonnxparser
+    ${YAML_LIB_PATH}
 )

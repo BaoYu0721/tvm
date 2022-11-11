@@ -5,7 +5,7 @@ import onnx.checker
 import os
 import subprocess
 
-from tvm_codec import parseSimpleCfg, model_data_map, parseDataShapeFromTxt, model_inname_map
+from common import parseCfgYaml, prepareData
 
 def update_inputs_outputs_dims(model: ModelProto, input_dims: Dict[str, List[Any]], output_dims: Dict[str, List[Any]]) -> ModelProto:
     """
@@ -77,14 +77,13 @@ def update_inputs_outputs_dims(model: ModelProto, input_dims: Dict[str, List[Any
     return model
 
 if __name__ == '__main__':
-    model_name, target, model_version, data_idx = parseSimpleCfg('./simple_cfg.txt')
-    dir_name = model_data_map[model_name]
-    input_shape = parseDataShapeFromTxt('{}/{}/input_shape_{}.txt'.format(dir_name, model_version, data_idx))
-    output_shape = parseDataShapeFromTxt('{}/{}/output_shape_{}.txt'.format(dir_name, model_version, data_idx))
-    out_name = '{}_out'.format(model_name) if (model_name != 'z_decoder_int') else 'z_decoder_out'
+    cfg = parseCfgYaml('./config.yaml')
+    model_name, target, data_idx = cfg['model_name'], cfg['target'], cfg['data_idx']
+    dir_name = cfg[model_name]['data_dir']
+    in_shape_dict, in_data_dict, out_shape_dict, out_data_dict = prepareData(cfg)
 
-    model = onnx.load('./models/{}_onnx/{}.onnx'.format(model_version, model_name))
-    changed_shape_mod = update_inputs_outputs_dims(model, {model_inname_map[model_name]: [*input_shape]}, {out_name: [*output_shape]})
+    model = onnx.load(cfg[model_name]['model_path'])
+    changed_shape_mod = update_inputs_outputs_dims(model, in_shape_dict, out_shape_dict)
     tmp_trt_dir = './tmp_trt_models'
     os.makedirs(tmp_trt_dir, exist_ok=True)
     tmp_onnx_path = '{}/{}.onnx'.format(tmp_trt_dir, model_name)

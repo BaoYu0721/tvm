@@ -8,8 +8,7 @@
 #include "common_tools.hpp"
 #include <chrono>
 #include <NvOnnxParser.h>
-
-std::map<std::string, CodecNetProperty> name_prop_map;
+#include <cstring>
 
 class Logger : public nvinfer1::ILogger
 {
@@ -70,40 +69,28 @@ nvinfer1::ICudaEngine* createCudaEngine(const std::string &onnxModelPath)
     return builder->buildEngineWithConfig(*network, *config);
 }
 
-class TrtEngineRunner
+class TrtEngineRunner : public BaseForwarder<void*>
 {
 public:
-    TrtEngineRunner(const std::string &engine_file_name, const std::string &model_name, const std::string &model_version);
-    void prepareInOutBuffer(int data_idx);
+    TrtEngineRunner(YAML::Node cfg);
+    void copyRawToTargetBuf(std::any raw_buf, void* &tar_buf, int ele_size);
+    void copyTargetBufToRaw(void* &tar_buf, std::any raw_buf, int ele_size);
+    void initTargetBuf(int n, int c, int h, int w, const std::string &type_str, 
+        int buffer_idx, int buffer_type_flag, void* &res_buf);
     void forwardOneTime();
-    void checkAccuracy();
+    ~TrtEngineRunner();
 
 private:
     std::unique_ptr<nvinfer1::ICudaEngine> engine;
     std::unique_ptr<nvinfer1::IExecutionContext> context;
     cudaStream_t stream;
-
-    std::string mod_name;
-    std::string mod_version;
-
-    void *cuda_in_mem;
-    void *cuda_out_mem;
-    void *cuda_gt_mem;
-    int total_in_size;
-    int total_out_size;
-
-    template<typename T>
-    void allocBufferAndLoadData(const std::string &data_fn, int total_size, void *&cuda_mem);
-    void allocBufferAndLoadDataAccordingToType(const std::string &data_fn, int total_size, const std::string &type_str, void *&cuda_mem);
-
-    template<typename T>
-    void checkOutAndGT();
+    std::vector<int> input_bindings;
+    std::vector<int> output_bindings;
 };
 
-TrtEngineRunner::TrtEngineRunner(const std::string &engine_file_name, const std::string &model_name, const std::string &model_version)
+TrtEngineRunner::TrtEngineRunner(YAML::Node cfg) : BaseForwarder<void*>(cfg)
 {
-    this->mod_name = model_name;
-    this->mod_version = model_version;
+    std::string engine_file_name = "../tmp_trt_models/" + mod_name + ".engine";
     std::string buffer = readBuffer(engine_file_name);
     if (buffer.size())
     {
@@ -112,8 +99,7 @@ TrtEngineRunner::TrtEngineRunner(const std::string &engine_file_name, const std:
     }
     else
     {
-        // std::string onnx_path = "../models/" + model_version + "_onnx/" + model_name + ".onnx";
-        std::string onnx_path = "../tmp_trt_models/" + model_name + ".onnx";
+        std::string onnx_path = "../tmp_trt_models/" + mod_name + ".onnx";
         engine.reset(createCudaEngine(onnx_path));
         if (engine != nullptr)
         {
@@ -125,75 +111,85 @@ TrtEngineRunner::TrtEngineRunner(const std::string &engine_file_name, const std:
 
     context.reset(engine->createExecutionContext());
     cudaStreamCreate(&stream);
-
-    cuda_in_mem = nullptr;
-    cuda_out_mem = nullptr;
-    cuda_gt_mem = nullptr;
 }
 
-template<typename T>
-void TrtEngineRunner::allocBufferAndLoadData(const std::string &data_fn, int total_size, void *&cuda_mem)
+TrtEngineRunner::~TrtEngineRunner()
 {
-    cudaMalloc(&cuda_mem, total_size * sizeof(T));
-    if (data_fn != "")
+    for (size_t i = 0; i < in_data_list.size(); i++)
     {
-        T *data_ptr = new T[total_size];
-        getDataFromBin(data_fn, data_ptr, total_size);
-        cudaMemcpyAsync(cuda_mem, data_ptr, total_size * sizeof(T), cudaMemcpyHostToDevice, stream);
-        delete [] data_ptr;
+        cudaFree(in_data_list[i]);
+    }
+    for (size_t i = 0; i < out_data_list.size(); i++)
+    {
+        cudaFree(out_data_list[i]);
+        cudaFree(gt_data_list[i]);
     }
 }
 
-void TrtEngineRunner::allocBufferAndLoadDataAccordingToType(const std::string &data_fn, int total_size, const std::string &type_str, void *&cuda_mem)
+void TrtEngineRunner::initTargetBuf(int n, int c, int h, int w, const std::string &type_str,
+    int buffer_idx, int buffer_type_flag, void* &res_buf)
 {
+    int total_size = n * c * h * w;
+    res_buf = nullptr;
     if (type_str == "float32")
-    {
-        allocBufferAndLoadData<float>(data_fn, total_size, cuda_mem);
-    }
+        cudaMalloc(&res_buf, total_size * sizeof(float));
     else if (type_str == "int32")
-    {
-        allocBufferAndLoadData<int32_t>(data_fn, total_size, cuda_mem);
-    }
+        cudaMalloc(&res_buf, total_size * sizeof(int));
     else if (type_str == "uint8")
+        cudaMalloc(&res_buf, total_size * sizeof(uint8_t));
+
+    if (buffer_type_flag == INPUT_TYPE)
     {
-        allocBufferAndLoadData<uint8_t>(data_fn, total_size, cuda_mem);
+        int input_idx = engine->getBindingIndex(in_name_list[buffer_idx].c_str());
+        nvinfer1::Dims4 input_dims = nvinfer1::Dims4{n, c, h, w};
+        context->setBindingDimensions(input_idx, input_dims);
+        input_bindings.push_back(input_idx);
+    }
+    else if (buffer_type_flag == OUTPUT_TYPE)
+    {
+        int out_idx = engine->getBindingIndex(out_name_list[buffer_idx].c_str());
+        output_bindings.push_back(out_idx);
     }
 }
 
-void TrtEngineRunner::prepareInOutBuffer(int data_idx)
+void TrtEngineRunner::copyRawToTargetBuf(std::any raw_buf, void* &tar_buf, int ele_size)
 {
-    int in, ic, ih, iw, on, oc, oh, ow;
-    std::string data_dir = "./" + (name_prop_map.find(mod_name))->second.inout_data_dir + "/" + mod_version + "/";
-    std::string in_shape_name = data_dir + "input_shape_" + std::to_string(data_idx) + ".txt";
-    std::string out_shape_name = data_dir + "output_shape_" + std::to_string(data_idx) + ".txt";
-    std::string in_data_name = data_dir + "input_" + std::to_string(data_idx) + ".bin";
-    std::string out_data_name = data_dir + "output_" + std::to_string(data_idx) + ".bin";
-    parseShapeTxt(in_shape_name, in, ic, ih, iw);
-    parseShapeTxt(out_shape_name, on, oc, oh, ow);
-    std::string in_type = (name_prop_map.find(mod_name))->second.in_type;
-    std::string out_type = (name_prop_map.find(mod_name))->second.out_type;
-    total_in_size = in * ic * ih * iw;
-    total_out_size = on * oc * oh * ow;
+    if (auto ptr = std::any_cast<float*>(&raw_buf))
+        cudaMemcpyAsync(tar_buf, *ptr, ele_size * sizeof(float), cudaMemcpyHostToDevice, stream);
+    else if (auto ptr = std::any_cast<int*>(&raw_buf))
+        cudaMemcpyAsync(tar_buf, *ptr, ele_size * sizeof(int), cudaMemcpyHostToDevice, stream);
+    else if (auto ptr = std::any_cast<uint8_t*>(&raw_buf))
+        cudaMemcpyAsync(tar_buf, *ptr, ele_size * sizeof(uint8_t), cudaMemcpyHostToDevice, stream);
+}
 
-    int32_t input_idx = engine->getBindingIndex((name_prop_map.find(mod_name))->second.input_name.c_str());
-    nvinfer1::Dims4 input_dims = nvinfer1::Dims4{in, ic, ih, iw};
-    context->setBindingDimensions(input_idx, input_dims);
-    // int32_t output_idx = engine->getBindingIndex("z_decoder_out");
-    // auto output_dims = context->getBindingDimensions(output_idx);
-
-    allocBufferAndLoadDataAccordingToType(in_data_name, total_in_size, in_type, cuda_in_mem);
-    allocBufferAndLoadDataAccordingToType("", total_out_size, out_type, cuda_out_mem);
-    allocBufferAndLoadDataAccordingToType(out_data_name, total_out_size, out_type, cuda_gt_mem);
+void TrtEngineRunner::copyTargetBufToRaw(void* &tar_buf, std::any raw_buf, int ele_size)
+{
+    if (auto ptr = std::any_cast<float*>(&raw_buf))
+        cudaMemcpyAsync(*ptr, tar_buf, ele_size * sizeof(float), cudaMemcpyDeviceToHost, stream);
+    else if (auto ptr = std::any_cast<int*>(&raw_buf))
+        cudaMemcpyAsync(*ptr, tar_buf, ele_size * sizeof(int), cudaMemcpyDeviceToHost, stream);
+    else if (auto ptr = std::any_cast<uint8_t*>(&raw_buf))
+        cudaMemcpyAsync(*ptr, tar_buf, ele_size * sizeof(uint8_t), cudaMemcpyDeviceToHost, stream);
 }
 
 void TrtEngineRunner::forwardOneTime()
 {
+    int binding_num = engine->getNbBindings();
+    void **bindings = (void**)malloc(binding_num * sizeof(void*));
+    memset(bindings, 0, binding_num * sizeof(void*));
+    for (size_t i = 0; i < in_data_list.size(); i++)
+    {
+        bindings[input_bindings[i]] = in_data_list[i];
+    }
+    for (size_t i = 0; i < out_data_list.size(); i++)
+    {
+        bindings[output_bindings[i]] = out_data_list[i];
+    }
+
     cudaEvent_t start, end;
     cudaEventCreate(&start);
     cudaEventCreate(&end);
     float elapsed_time;
-
-    void* bindings[] = {cuda_in_mem, cuda_out_mem};
     cudaEventRecord(start, stream);
     bool status = context->enqueueV2(bindings, stream, nullptr);
     if (!status)
@@ -204,47 +200,15 @@ void TrtEngineRunner::forwardOneTime()
     cudaStreamSynchronize(stream);
     cudaEventElapsedTime(&elapsed_time, start, end);
     std::cout << "Inference spent: " <<  elapsed_time  << "ms\n";
-}
-
-template<typename T>
-void TrtEngineRunner::checkOutAndGT()
-{
-    T *out_raw = new T[total_out_size];
-    T *gt_raw = new T[total_out_size];
-    cudaMemcpyAsync(out_raw, cuda_out_mem, total_out_size * sizeof(T), cudaMemcpyDeviceToHost, stream);
-    cudaMemcpyAsync(gt_raw, cuda_gt_mem, total_out_size * sizeof(T), cudaMemcpyDeviceToHost, stream);
-    checkDiff(out_raw, gt_raw, total_out_size);
-    delete [] out_raw;
-    delete [] gt_raw;
-}
-
-void TrtEngineRunner::checkAccuracy()
-{
-    std::string out_type = (name_prop_map.find(mod_name))->second.out_type;
-    if (out_type == "float32")
-    {
-        checkOutAndGT<float>();
-    }
-    else if (out_type == "int32")
-    {
-        checkOutAndGT<int>();
-    }
-    else if (out_type == "uint8")
-    {
-        checkOutAndGT<uint8_t>();
-    }
+    free(bindings);
 }
 
 int main()
 {
-    std::string model_name, model_version, target_name;
-    int data_idx = 0;
-    parseSimpleCfg("../simple_cfg.txt", model_name, target_name, model_version, data_idx);
-    prepareNamePropertyMap(model_version);
+    YAML::Node cfg = YAML::LoadFile("../config.yaml");
     // trtexec --onnx=./tmp_trt_models/z_decoder.onnx --workspace=64 --buildOnly --saveEngine=./tmp_trt_models/z_decoder.engine
-    std::string engine_name = "../tmp_trt_models/" + model_name + ".engine";
-    TrtEngineRunner trtr(engine_name, model_name, model_version);
-    trtr.prepareInOutBuffer(data_idx);
+    TrtEngineRunner trtr(cfg);
+    trtr.prepareInOutBuffer();
     std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
     trtr.forwardOneTime();
     std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();

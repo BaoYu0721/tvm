@@ -13,59 +13,10 @@ from tvm.autotvm.tuner import XGBTuner, GATuner, RandomTuner, GridSearchTuner
 from tvm.autotvm.graph_tuner import DPTuner, PBQPTuner
 from tvm import autotvm
 
-model_data_map = {
-    'y_decoder': './test_data/ydecoder_inout',
-    'y_encoder': './test_data/yencoder_inout',
-    'z_decoder_int': './test_data/zdecoder_inout',
-    'z_decoder': './test_data/zdecoder_inout',
-    'z_encoder': './test_data/zencoder_inout'
-}
-model_type_map = {
-    'y_decoder': (np.float32, np.float32),
-    'y_encoder': (np.float32, np.float32),
-    'z_decoder_int': (np.int32, np.uint8),
-    'z_decoder': (np.int32, np.uint8),
-    'z_encoder': (np.float32, np.float32)
-}
-model_inname_map = {
-    'y_decoder': 'y_decoder_data',
-    'y_encoder': 'y_encoder_data',
-    'z_decoder_int': 'z_decoder_data',
-    'z_decoder': 'z_decoder_data',
-    'z_encoder': 'z_encoder_data'
-}
+from common import parseCfgYaml, prepareData
 
-def parseSimpleCfg(cfg_fn):
-    with open(cfg_fn, 'r') as fcfg:
-        lines = fcfg.readlines()
-        res = []
-        for line in lines:
-            res.append(line.strip())
-        model_name, target, model_version, data_idx = res[0], res[1], res[2], int(res[3])
-    return model_name, target, model_version, data_idx
-
-def parseDataShapeFromTxt(file_name):
-    with open(file_name, 'r') as fp:
-        content = fp.read().strip()
-        shape = eval(content)
-        return shape
-
-def prepareData(model_name, model_version, data_idx):
-    dir_name = model_data_map[model_name]
-    in_type, out_type = model_type_map[model_name]
-    if model_version == 's0.4.1':
-        in_type, out_type = np.float32, np.float32
-    input_np = np.fromfile('{}/{}/input_{}.bin'.format(dir_name, model_version, data_idx), dtype=in_type)
-    output_np = np.fromfile('{}/{}/output_{}.bin'.format(dir_name, model_version, data_idx), dtype=out_type)
-    input_shape = parseDataShapeFromTxt('{}/{}/input_shape_{}.txt'.format(dir_name, model_version, data_idx))
-    output_shape = parseDataShapeFromTxt('{}/{}/output_shape_{}.txt'.format(dir_name, model_version, data_idx))
-    input_np = input_np.reshape(input_shape)
-    output_np = output_np.reshape(output_shape)
-    return input_np, output_np, input_shape, output_shape
-
-def runRelayFrontEnd(input_name, onnx_model, img_data):
-    shape_dict = {input_name: img_data.shape}
-    mod, params = relay.frontend.from_onnx(onnx_model, shape_dict)
+def runRelayFrontEnd(onnx_model, in_shape_dict):
+    mod, params = relay.frontend.from_onnx(onnx_model, in_shape_dict)
     return mod, params
 
 def createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path, pass_ctx_config=None):
@@ -81,16 +32,18 @@ def createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path, pass_
         module = graph_executor.GraphModule(lib['default'](dev))
     return module
 
-def runGraph(input_name, module, img_data, output_shape):
-    module.set_input(input_name, img_data)
+def runGraph(module, in_data_dict : dict, out_num : int):
+    for in_name, data in in_data_dict.items():
+        module.set_input(in_name, data)
     module.run()
-    # tvm_output = module.get_output(0, tvm.nd.empty(output_shape, dtype='uint8')).numpy()
-    tvm_output = module.get_output(0).numpy()
-    return tvm_output
+    tvm_out_list = []
+    for i in range(out_num):
+        tvm_out_list.append(module.get_output(i).numpy())
+    return tvm_out_list
 
 def getAutoTVMTuningOption(model_name, target):
-    autotvm_logname = './tune_logs/autotvm_{}_{}.log'.format(model_name, target)
-    graph_opt_filename = './tune_logs/autotvm_{}_{}_graph_opt.log'.format(model_name, target)
+    autotvm_logname = './tune_logs/autotvm_{}_{}.tnlg'.format(model_name, target)
+    graph_opt_filename = './tune_logs/autotvm_{}_{}_graph_opt.tnlg'.format(model_name, target)
     tuning_option = None
     if target == 'cuda':
         tuning_option = {
@@ -208,29 +161,27 @@ def checkOnnxModel(onnx_model):
         print (w.dtype)
 
 if __name__ == '__main__':
-    tune_flag = False
-    use_tensorrt = False
-    # tune_method: 'autotvm' or 'autoscheduler'
-    debug_flag, save_lib_flag, tune_method = False, True, 'autotvm'
+    cfg = parseCfgYaml('./config.yaml')
+    tune_flag, use_tensorrt = cfg['use_tvm_tune'], cfg['use_tvm_trt_integration']
+    debug_flag, save_lib_flag, tune_method = False, True, cfg['tvm_tune_method']
 
-    model_name, target, model_version, data_idx = parseSimpleCfg('./simple_cfg.txt')
+    model_name, target, data_idx = cfg['model_name'], cfg['target'], cfg['data_idx']
     use_tensorrt = use_tensorrt and (target == 'cuda')  # 只有在 cuda 下才可以考虑用 tensorrt
-    input_name = model_inname_map[model_name]
     debug_dir = './debug_{}'.format(model_name)
-    onnx_model = onnx.load('./models/{}_onnx/{}.onnx'.format(model_version, model_name))
+    onnx_model = onnx.load(cfg[model_name]['model_path'])
     if save_lib_flag:
         save_lib_path = './libs/{}.so'.format(model_name)
     else:
         save_lib_path = None
     checkOnnxModel(onnx_model)
 
-    input_np, output_np, input_shape, output_shape = prepareData(model_name, model_version, data_idx)
+    in_shape_dict, in_data_dict, out_shape_dict, out_data_dict = prepareData(cfg)
 
-    mod, params = runRelayFrontEnd(input_name, onnx_model, input_np)
+    mod, params = runRelayFrontEnd(onnx_model, in_shape_dict)
     if use_tensorrt:
         mod = partition_for_tensorrt(mod, params)
         print(mod['main'])
-    tvm_output, pass_ctx_config = None, None
+    tvm_out_list, pass_ctx_config = None, None
 
     if tune_flag:
         if tune_method == 'autotvm':
@@ -241,27 +192,30 @@ if __name__ == '__main__':
             autoTVMTuneKernel(target, mod, params, tuning_option)
             with autotvm.apply_history_best(tuning_option['log_filename']):
                 module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
-                tvm_output = runGraph(input_name, module, input_np, output_shape)
+                tvm_out_list = runGraph(module, in_data_dict, len(out_shape_dict))
 
             if tuning_option['use_graph_tuning']:
-                autoTVMTuneGraph(mod, target, {input_name: input_shape}, tuning_option)
+                autoTVMTuneGraph(mod, target, in_shape_dict, tuning_option)
                 with autotvm.apply_graph_best(tuning_option['graph_opt_filename']):
                     module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
-                    tvm_output = runGraph(input_name, module, input_np, output_shape)
+                    tvm_out_list = runGraph(module, in_data_dict, len(out_shape_dict))
         else:
             # use auto_scheduler
-            log_file = './tune_logs/autoscheduler_{}_{}.log'.format(model_name, target)
+            log_file = './tune_logs/autoscheduler_{}_{}.tnlg'.format(model_name, target)
             autoSchedulerTune(log_file, target, mod, params, debug_flag)
 
             with auto_scheduler.ApplyHistoryBest(log_file):
                 pass_ctx_config = {'relay.backend.use_auto_scheduler': True}
                 module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path, pass_ctx_config)
-                tvm_output = runGraph(input_name, module, input_np, output_shape)
+                tvm_out_list = runGraph(module, in_data_dict, len(out_shape_dict))
     else:
         # 不 tune performance， 直接运行
         module = createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path)
-        tvm_output = runGraph(input_name, module, input_np, output_shape)
+        tvm_out_list = runGraph(module, in_data_dict, len(out_shape_dict))
 
-    if tvm_output is not None:
-        err = np.abs(tvm_output.astype(np.float32) - output_np.astype(np.float32))
-        print (err.max(), err.min(), err.mean())
+    if tvm_out_list is not None:
+        i = 0
+        for out_name, out_data in out_data_dict.items():
+            err = np.abs(tvm_out_list[i].astype(np.float32) - out_data.astype(np.float32))
+            print ('the {} th output:'.format(i), err.max(), err.min(), err.mean())
+            i += 1
