@@ -111,3 +111,15 @@ u0_4_1_z_encoder:
   out_bin_names: ["output_*.bin"]
   in_shape_names: ["input_shape_*.txt"]
   out_shape_names: ["output_shape_*.txt"]
+
+prequant_z_decoder_int:
+  model_path: ./models/prequantized_model/z_decoder_int_out.onnx
+  data_dir: ./test_data/prequantized/z_decoder/
+  in_types: ["int32"]
+  out_types: ["int8"]
+  in_tensor_names: ["z_decoder_data"]
+  out_tensor_names: ["89_Cast"]
+  in_bin_names: ["input_*.bin"]
+  out_bin_names: ["output_*.bin"]
+  in_shape_names: ["input_shape_*.txt"]
+  out_shape_names: ["output_shape_*.txt"]

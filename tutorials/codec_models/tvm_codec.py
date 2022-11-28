@@ -27,6 +27,7 @@ def createGraph(target, mod, params, debug_flag, debug_dir, save_lib_path, pass_
         lib.export_library(save_lib_path)
     dev = tvm.device(str(target), 0)
     if debug_flag:
+        os.makedirs(debug_dir, exist_ok=True)
         module = GraphModuleDebug(lib["debug_create"]("default", dev), [dev], lib.graph_json, dump_root=debug_dir)
     else:
         module = graph_executor.GraphModule(lib['default'](dev))
@@ -158,14 +159,14 @@ def checkOnnxModel(onnx_model):
     for init in initializers:
         w = numpy_helper.to_array(init)
         weights.append(w)
-        print (w.dtype)
+        print (init.name, ': ', w.dtype)
 
 if __name__ == '__main__':
     cfg = parseCfgYaml('./config.yaml')
     tune_flag, use_tensorrt = cfg['use_tvm_tune'], cfg['use_tvm_trt_integration']
     debug_flag, save_lib_flag, tune_method = False, True, cfg['tvm_tune_method']
 
-    model_name, target, data_idx = cfg['model_name'], cfg['target'], cfg['data_idx']
+    model_name, target = cfg['model_name'], cfg['target']
     use_tensorrt = use_tensorrt and (target == 'cuda')  # 只有在 cuda 下才可以考虑用 tensorrt
     debug_dir = './debug_{}'.format(model_name)
     onnx_model = onnx.load(cfg[model_name]['model_path'])
